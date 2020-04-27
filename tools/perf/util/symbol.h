@@ -9,8 +9,6 @@
 #include <linux/rbtree.h>
 #include <stdio.h>
 
-#define DEBUG_CACHE_DIR ".debug"
-
 #ifdef HAVE_CPLUS_DEMANGLE
 extern char *cplus_demangle(const char *, int);
 
@@ -50,11 +48,17 @@ char *strxfrchar(char *s, char from, char to);
 
 #define BUILD_ID_SIZE 20
 
+/** struct symbol - symtab entry
+ *
+ * @ignore - resolvable but tools ignore it (e.g. idle routines)
+ */
 struct symbol {
 	struct rb_node	rb_node;
 	u64		start;
 	u64		end;
 	u16		namelen;
+	u8		binding;
+	bool		ignore;
 	char		name[0];
 };
 
@@ -70,9 +74,11 @@ struct symbol_conf {
 			show_nr_samples,
 			use_callchain,
 			exclude_other,
-			full_paths,
-			show_cpu_utilization;
+			show_cpu_utilization,
+			initialized;
 	const char	*vmlinux_name,
+			*kallsyms_name,
+			*source_prefix,
 			*field_sep;
 	const char	*default_guest_vmlinux_name,
 			*default_guest_kallsyms,
@@ -85,6 +91,7 @@ struct symbol_conf {
        struct strlist	*dso_list,
 			*comm_list,
 			*sym_list;
+	const char	*symfs;
 };
 
 extern struct symbol_conf symbol_conf;
@@ -103,6 +110,8 @@ struct ref_reloc_sym {
 struct map_symbol {
 	struct map    *map;
 	struct symbol *sym;
+	bool	      unfolded;
+	bool	      has_children;
 };
 
 struct addr_location {
@@ -112,7 +121,8 @@ struct addr_location {
 	u64	      addr;
 	char	      level;
 	bool	      filtered;
-	unsigned int  cpumode;
+	u8	      cpumode;
+	s32	      cpu;
 };
 
 enum dso_kernel_type {
@@ -125,13 +135,14 @@ struct dso {
 	struct list_head node;
 	struct rb_root	 symbols[MAP__NR_TYPES];
 	struct rb_root	 symbol_names[MAP__NR_TYPES];
-	u8		 adjust_symbols:1;
-	u8		 slen_calculated:1;
-	u8		 has_build_id:1;
 	enum dso_kernel_type	kernel;
+	u8		 adjust_symbols:1;
+	u8		 has_build_id:1;
 	u8		 hit:1;
 	u8		 annotate_warned:1;
-	unsigned char	 origin;
+	u8		 sname_alloc:1;
+	u8		 lname_alloc:1;
+	unsigned char	 symtab_type;
 	u8		 sorted_by_name;
 	u8		 loaded;
 	u8		 build_id[BUILD_ID_SIZE];
@@ -146,6 +157,8 @@ struct dso *dso__new(const char *name);
 struct dso *dso__new_kernel(const char *name);
 void dso__delete(struct dso *self);
 
+int dso__name_len(const struct dso *self);
+
 bool dso__loaded(const struct dso *self, enum map_type type);
 bool dso__sorted_by_name(const struct dso *self, enum map_type type);
 
@@ -159,6 +172,8 @@ void dso__sort_by_name(struct dso *self, enum map_type type);
 struct dso *__dsos__findnew(struct list_head *head, const char *name);
 
 int dso__load(struct dso *self, struct map *map, symbol_filter_t filter);
+int dso__load_vmlinux(struct dso *self, struct map *map,
+		      const char *vmlinux, symbol_filter_t filter);
 int dso__load_vmlinux_path(struct dso *self, struct map *map,
 			   symbol_filter_t filter);
 int dso__load_kallsyms(struct dso *self, const char *filename, struct map *map,
@@ -175,20 +190,21 @@ size_t machines__fprintf_dsos(struct rb_root *self, FILE *fp);
 size_t machines__fprintf_dsos_buildid(struct rb_root *self, FILE *fp, bool with_hits);
 
 size_t dso__fprintf_buildid(struct dso *self, FILE *fp);
+size_t dso__fprintf_symbols_by_name(struct dso *self, enum map_type type, FILE *fp);
 size_t dso__fprintf(struct dso *self, enum map_type type, FILE *fp);
 
-enum dso_origin {
-	DSO__ORIG_KERNEL = 0,
-	DSO__ORIG_GUEST_KERNEL,
-	DSO__ORIG_JAVA_JIT,
-	DSO__ORIG_BUILD_ID_CACHE,
-	DSO__ORIG_FEDORA,
-	DSO__ORIG_UBUNTU,
-	DSO__ORIG_BUILDID,
-	DSO__ORIG_DSO,
-	DSO__ORIG_GUEST_KMODULE,
-	DSO__ORIG_KMODULE,
-	DSO__ORIG_NOT_FOUND,
+enum symtab_type {
+	SYMTAB__KALLSYMS = 0,
+	SYMTAB__GUEST_KALLSYMS,
+	SYMTAB__JAVA_JIT,
+	SYMTAB__BUILD_ID_CACHE,
+	SYMTAB__FEDORA_DEBUGINFO,
+	SYMTAB__UBUNTU_DEBUGINFO,
+	SYMTAB__BUILDID_DEBUGINFO,
+	SYMTAB__SYSTEM_PATH_DSO,
+	SYMTAB__GUEST_KMODULE,
+	SYMTAB__SYSTEM_PATH_KMODULE,
+	SYMTAB__NOT_FOUND,
 };
 
 char dso__symtab_origin(const struct dso *self);
@@ -205,15 +221,18 @@ bool __dsos__read_build_ids(struct list_head *head, bool with_hits);
 int build_id__sprintf(const u8 *self, int len, char *bf);
 int kallsyms__parse(const char *filename, void *arg,
 		    int (*process_symbol)(void *arg, const char *name,
-					  char type, u64 start));
+					  char type, u64 start, u64 end));
 
+void machine__destroy_kernel_maps(struct machine *self);
 int __machine__create_kernel_maps(struct machine *self, struct dso *kernel);
 int machine__create_kernel_maps(struct machine *self);
 
 int machines__create_kernel_maps(struct rb_root *self, pid_t pid);
 int machines__create_guest_kernel_maps(struct rb_root *self);
+void machines__destroy_guest_kernel_maps(struct rb_root *self);
 
 int symbol__init(void);
+void symbol__exit(void);
 bool symbol_type__is_a(char symbol_type, enum map_type map_type);
 
 size_t machine__fprintf_vmlinux_path(struct machine *self, FILE *fp);

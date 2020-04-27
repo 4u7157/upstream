@@ -34,6 +34,8 @@
  *    Modifications for 2.3.99-pre5 kernel.
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #define DRV_NAME	"tun"
 #define DRV_VERSION	"1.6"
 #define DRV_DESCRIPTION	"Universal TUN/TAP device driver"
@@ -76,11 +78,27 @@
 #ifdef TUN_DEBUG
 static int debug;
 
-#define DBG  if(tun->debug)printk
-#define DBG1 if(debug==2)printk
+#define tun_debug(level, tun, fmt, args...)			\
+do {								\
+	if (tun->debug)						\
+		netdev_printk(level, tun->dev, fmt, ##args);	\
+} while (0)
+#define DBG1(level, fmt, args...)				\
+do {								\
+	if (debug == 2)						\
+		printk(level fmt, ##args);			\
+} while (0)
 #else
-#define DBG( a... )
-#define DBG1( a... )
+#define tun_debug(level, tun, fmt, args...)			\
+do {								\
+	if (0)							\
+		netdev_printk(level, tun->dev, fmt, ##args);	\
+} while (0)
+#define DBG1(level, fmt, args...)				\
+do {								\
+	if (0)							\
+		printk(level fmt, ##args);			\
+} while (0)
 #endif
 
 #define FLT_EXACT_COUNT 8
@@ -149,6 +167,7 @@ static int tun_attach(struct tun_struct *tun, struct file *file)
 	tfile->tun = tun;
 	tun->tfile = tfile;
 	tun->socket.file = file;
+	netif_carrier_on(tun->dev);
 	dev_hold(tun->dev);
 	sock_hold(tun->socket.sk);
 	atomic_inc(&tfile->count);
@@ -162,6 +181,7 @@ static void __tun_detach(struct tun_struct *tun)
 {
 	/* Detach from net device */
 	netif_tx_lock_bh(tun->dev);
+	netif_carrier_off(tun->dev);
 	tun->tfile = NULL;
 	tun->socket.file = NULL;
 	netif_tx_unlock_bh(tun->dev);
@@ -203,7 +223,7 @@ static void tun_put(struct tun_struct *tun)
 		tun_detach(tfile->tun);
 }
 
-/* TAP filterting */
+/* TAP filtering */
 static void addr_hash_set(u32 *mask, const u8 *addr)
 {
 	int n = ether_crc(ETH_ALEN, addr) >> 26;
@@ -358,7 +378,7 @@ static netdev_tx_t tun_net_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct tun_struct *tun = netdev_priv(dev);
 
-	DBG(KERN_INFO "%s: tun_net_xmit %d\n", tun->dev->name, skb->len);
+	tun_debug(KERN_INFO, tun, "tun_net_xmit %d\n", skb->len);
 
 	/* Drop packet if interface is not attached */
 	if (!tun->tfile)
@@ -497,7 +517,7 @@ static unsigned int tun_chr_poll(struct file *file, poll_table * wait)
 
 	sk = tun->socket.sk;
 
-	DBG(KERN_INFO "%s: tun_chr_poll\n", tun->dev->name);
+	tun_debug(KERN_INFO, tun, "tun_chr_poll\n");
 
 	poll_wait(file, &tun->wq.wait, wait);
 
@@ -688,7 +708,7 @@ static ssize_t tun_chr_aio_write(struct kiocb *iocb, const struct iovec *iv,
 	if (!tun)
 		return -EBADFD;
 
-	DBG(KERN_INFO "%s: tun_chr_write %ld\n", tun->dev->name, count);
+	tun_debug(KERN_INFO, tun, "tun_chr_write %ld\n", count);
 
 	result = tun_get_user(tun, iv, iov_length(iv, count),
 			      file->f_flags & O_NONBLOCK);
@@ -737,7 +757,7 @@ static __inline__ ssize_t tun_put_user(struct tun_struct *tun,
 			else if (sinfo->gso_type & SKB_GSO_UDP)
 				gso.gso_type = VIRTIO_NET_HDR_GSO_UDP;
 			else {
-				printk(KERN_ERR "tun: unexpected GSO type: "
+				pr_err("unexpected GSO type: "
 				       "0x%x, gso_size %d, hdr_len %d\n",
 				       sinfo->gso_type, gso.gso_size,
 				       gso.hdr_len);
@@ -755,7 +775,7 @@ static __inline__ ssize_t tun_put_user(struct tun_struct *tun,
 
 		if (skb->ip_summed == CHECKSUM_PARTIAL) {
 			gso.flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
-			gso.csum_start = skb->csum_start - skb_headroom(skb);
+			gso.csum_start = skb_checksum_start_offset(skb);
 			gso.csum_offset = skb->csum_offset;
 		} /* else everything is zero */
 
@@ -784,7 +804,7 @@ static ssize_t tun_do_read(struct tun_struct *tun,
 	struct sk_buff *skb;
 	ssize_t ret = 0;
 
-	DBG(KERN_INFO "%s: tun_chr_read\n", tun->dev->name);
+	tun_debug(KERN_INFO, tun, "tun_chr_read\n");
 
 	add_wait_queue(&tun->wq.wait, &wait);
 	while (len) {
@@ -1081,7 +1101,7 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 		if (device_create_file(&tun->dev->dev, &dev_attr_tun_flags) ||
 		    device_create_file(&tun->dev->dev, &dev_attr_owner) ||
 		    device_create_file(&tun->dev->dev, &dev_attr_group))
-			printk(KERN_ERR "Failed to create tun sysfs files\n");
+			pr_err("Failed to create tun sysfs files\n");
 
 		sk->sk_destruct = tun_sock_destruct;
 
@@ -1090,7 +1110,7 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 			goto failed;
 	}
 
-	DBG(KERN_INFO "%s: tun_set_iff\n", tun->dev->name);
+	tun_debug(KERN_INFO, tun, "tun_set_iff\n");
 
 	if (ifr->ifr_flags & IFF_NO_PI)
 		tun->flags |= TUN_NO_PI;
@@ -1127,7 +1147,7 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 static int tun_get_iff(struct net *net, struct tun_struct *tun,
 		       struct ifreq *ifr)
 {
-	DBG(KERN_INFO "%s: tun_get_iff\n", tun->dev->name);
+	tun_debug(KERN_INFO, tun, "tun_get_iff\n");
 
 	strcpy(ifr->ifr_name, tun->dev->name);
 
@@ -1140,7 +1160,7 @@ static int tun_get_iff(struct net *net, struct tun_struct *tun,
  * privs required. */
 static int set_offload(struct net_device *dev, unsigned long arg)
 {
-	unsigned int old_features, features;
+	u32 old_features, features;
 
 	old_features = dev->features;
 	/* Unset features, set them as we chew on the arg. */
@@ -1227,7 +1247,7 @@ static long __tun_chr_ioctl(struct file *file, unsigned int cmd,
 	if (!tun)
 		goto unlock;
 
-	DBG(KERN_INFO "%s: tun_chr_ioctl cmd %d\n", tun->dev->name, cmd);
+	tun_debug(KERN_INFO, tun, "tun_chr_ioctl cmd %d\n", cmd);
 
 	ret = 0;
 	switch (cmd) {
@@ -1247,8 +1267,8 @@ static long __tun_chr_ioctl(struct file *file, unsigned int cmd,
 		else
 			tun->flags &= ~TUN_NOCHECKSUM;
 
-		DBG(KERN_INFO "%s: checksum %s\n",
-		    tun->dev->name, arg ? "disabled" : "enabled");
+		tun_debug(KERN_INFO, tun, "checksum %s\n",
+			  arg ? "disabled" : "enabled");
 		break;
 
 	case TUNSETPERSIST:
@@ -1258,33 +1278,34 @@ static long __tun_chr_ioctl(struct file *file, unsigned int cmd,
 		else
 			tun->flags &= ~TUN_PERSIST;
 
-		DBG(KERN_INFO "%s: persist %s\n",
-		    tun->dev->name, arg ? "enabled" : "disabled");
+		tun_debug(KERN_INFO, tun, "persist %s\n",
+			  arg ? "enabled" : "disabled");
 		break;
 
 	case TUNSETOWNER:
 		/* Set owner of the device */
 		tun->owner = (uid_t) arg;
 
-		DBG(KERN_INFO "%s: owner set to %d\n", tun->dev->name, tun->owner);
+		tun_debug(KERN_INFO, tun, "owner set to %d\n", tun->owner);
 		break;
 
 	case TUNSETGROUP:
 		/* Set group of the device */
 		tun->group= (gid_t) arg;
 
-		DBG(KERN_INFO "%s: group set to %d\n", tun->dev->name, tun->group);
+		tun_debug(KERN_INFO, tun, "group set to %d\n", tun->group);
 		break;
 
 	case TUNSETLINK:
 		/* Only allow setting the type when the interface is down */
 		if (tun->dev->flags & IFF_UP) {
-			DBG(KERN_INFO "%s: Linktype set failed because interface is up\n",
-				tun->dev->name);
+			tun_debug(KERN_INFO, tun,
+				  "Linktype set failed because interface is up\n");
 			ret = -EBUSY;
 		} else {
 			tun->dev->type = (int) arg;
-			DBG(KERN_INFO "%s: linktype set to %d\n", tun->dev->name, tun->dev->type);
+			tun_debug(KERN_INFO, tun, "linktype set to %d\n",
+				  tun->dev->type);
 			ret = 0;
 		}
 		break;
@@ -1307,7 +1328,7 @@ static long __tun_chr_ioctl(struct file *file, unsigned int cmd,
 		break;
 
 	case SIOCGIFHWADDR:
-		/* Get hw addres */
+		/* Get hw address */
 		memcpy(ifr.ifr_hwaddr.sa_data, tun->dev->dev_addr, ETH_ALEN);
 		ifr.ifr_hwaddr.sa_family = tun->dev->type;
 		if (copy_to_user(argp, &ifr, ifreq_len))
@@ -1316,8 +1337,8 @@ static long __tun_chr_ioctl(struct file *file, unsigned int cmd,
 
 	case SIOCSIFHWADDR:
 		/* Set hw address */
-		DBG(KERN_DEBUG "%s: set hw address: %pM\n",
-			tun->dev->name, ifr.ifr_hwaddr.sa_data);
+		tun_debug(KERN_DEBUG, tun, "set hw address: %pM\n",
+			  ifr.ifr_hwaddr.sa_data);
 
 		ret = dev_set_mac_address(tun->dev, &ifr.ifr_hwaddr);
 		break;
@@ -1431,7 +1452,7 @@ static int tun_chr_fasync(int fd, struct file *file, int on)
 	if (!tun)
 		return -EBADFD;
 
-	DBG(KERN_INFO "%s: tun_chr_fasync %d\n", tun->dev->name, on);
+	tun_debug(KERN_INFO, tun, "tun_chr_fasync %d\n", on);
 
 	if ((ret = fasync_helper(fd, file, on, &tun->fasync)) < 0)
 		goto out;
@@ -1453,7 +1474,7 @@ static int tun_chr_open(struct inode *inode, struct file * file)
 {
 	struct tun_file *tfile;
 
-	DBG1(KERN_INFO "tunX: tun_chr_open\n");
+	DBG1(KERN_INFO, "tunX: tun_chr_open\n");
 
 	tfile = kmalloc(sizeof(*tfile), GFP_KERNEL);
 	if (!tfile)
@@ -1474,7 +1495,7 @@ static int tun_chr_close(struct inode *inode, struct file *file)
 	if (tun) {
 		struct net_device *dev = tun->dev;
 
-		DBG(KERN_INFO "%s: tun_chr_close\n", dev->name);
+		tun_debug(KERN_INFO, tun, "tun_chr_close\n");
 
 		__tun_detach(tun);
 
@@ -1574,12 +1595,6 @@ static void tun_set_msglevel(struct net_device *dev, u32 value)
 #endif
 }
 
-static u32 tun_get_link(struct net_device *dev)
-{
-	struct tun_struct *tun = netdev_priv(dev);
-	return !!tun->tfile;
-}
-
 static u32 tun_get_rx_csum(struct net_device *dev)
 {
 	struct tun_struct *tun = netdev_priv(dev);
@@ -1601,7 +1616,7 @@ static const struct ethtool_ops tun_ethtool_ops = {
 	.get_drvinfo	= tun_get_drvinfo,
 	.get_msglevel	= tun_get_msglevel,
 	.set_msglevel	= tun_set_msglevel,
-	.get_link	= tun_get_link,
+	.get_link	= ethtool_op_get_link,
 	.get_rx_csum	= tun_get_rx_csum,
 	.set_rx_csum	= tun_set_rx_csum
 };
@@ -1611,18 +1626,18 @@ static int __init tun_init(void)
 {
 	int ret = 0;
 
-	printk(KERN_INFO "tun: %s, %s\n", DRV_DESCRIPTION, DRV_VERSION);
-	printk(KERN_INFO "tun: %s\n", DRV_COPYRIGHT);
+	pr_info("%s, %s\n", DRV_DESCRIPTION, DRV_VERSION);
+	pr_info("%s\n", DRV_COPYRIGHT);
 
 	ret = rtnl_link_register(&tun_link_ops);
 	if (ret) {
-		printk(KERN_ERR "tun: Can't register link_ops\n");
+		pr_err("Can't register link_ops\n");
 		goto err_linkops;
 	}
 
 	ret = misc_register(&tun_miscdev);
 	if (ret) {
-		printk(KERN_ERR "tun: Can't register misc device %d\n", TUN_MINOR);
+		pr_err("Can't register misc device %d\n", TUN_MINOR);
 		goto err_misc;
 	}
 	return  0;

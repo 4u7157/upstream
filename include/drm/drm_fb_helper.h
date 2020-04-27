@@ -32,6 +32,8 @@
 
 struct drm_fb_helper;
 
+#include <linux/kgdb.h>
+
 struct drm_fb_helper_crtc {
 	uint32_t crtc_id;
 	struct drm_mode_set mode_set;
@@ -78,6 +80,7 @@ struct drm_fb_helper_connector {
 
 struct drm_fb_helper {
 	struct drm_framebuffer *fb;
+	struct drm_framebuffer *saved_fb;
 	struct drm_device *dev;
 	struct drm_display_mode *mode;
 	int crtc_count;
@@ -115,6 +118,7 @@ int drm_fb_helper_setcolreg(unsigned regno,
 			    unsigned transp,
 			    struct fb_info *info);
 
+bool drm_fb_helper_restore_fbdev_mode(struct drm_fb_helper *fb_helper);
 void drm_fb_helper_restore(void);
 void drm_fb_helper_fill_var(struct fb_info *info, struct drm_fb_helper *fb_helper,
 			    uint32_t fb_width, uint32_t fb_height);
@@ -123,8 +127,10 @@ void drm_fb_helper_fill_fix(struct fb_info *info, uint32_t pitch,
 
 int drm_fb_helper_setcmap(struct fb_cmap *cmap, struct fb_info *info);
 
-bool drm_fb_helper_hotplug_event(struct drm_fb_helper *fb_helper);
+int drm_fb_helper_hotplug_event(struct drm_fb_helper *fb_helper);
 bool drm_fb_helper_initial_config(struct drm_fb_helper *fb_helper, int bpp_sel);
 int drm_fb_helper_single_add_all_connectors(struct drm_fb_helper *fb_helper);
+int drm_fb_helper_debug_enter(struct fb_info *info);
+int drm_fb_helper_debug_leave(struct fb_info *info);
 
 #endif

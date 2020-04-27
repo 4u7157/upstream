@@ -224,6 +224,8 @@
 #define S5PV210_UFSTAT_RXMASK	(255<<0)
 #define S5PV210_UFSTAT_RXSHIFT	(0)
 
+#define NO_NEED_CHECK_CLKSRC	1
+
 #ifndef __ASSEMBLY__
 
 /* struct s3c24xx_uart_clksrc
@@ -258,6 +260,8 @@ struct s3c2410_uartcfg {
 	unsigned char	   unused;
 	unsigned short	   flags;
 	upf_t		   uart_flags;	 /* default uart flags */
+
+	unsigned int	   has_fracval;
 
 	unsigned long	   ucon;	 /* value of ucon for port */
 	unsigned long	   ulcon;	 /* value of ulcon for port */

@@ -35,8 +35,7 @@
     (typeof(ptr)) (__ptr + (off)); })
 
 /* &a[0] degrades to a pointer: a different type from an array */
-#define __must_be_array(a) \
-  BUILD_BUG_ON_ZERO(__builtin_types_compatible_p(typeof(a), typeof(&a[0])))
+#define __must_be_array(a) BUILD_BUG_ON_ZERO(__same_type((a), &(a)[0]))
 
 /*
  * Force always-inline if the user requests it so via the .config,
@@ -93,3 +92,11 @@
 #if !defined(__noclone)
 #define __noclone	/* not needed */
 #endif
+
+/*
+ * A trick to suppress uninitialized variable warning without generating any
+ * code
+ */
+#define uninitialized_var(x) x = x
+
+#define __always_inline		inline __attribute__((always_inline))

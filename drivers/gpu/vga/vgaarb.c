@@ -151,7 +151,7 @@ static inline void vga_irq_set_state(struct vga_device *vgadev, bool state)
 static void vga_check_first_use(void)
 {
 	/* we should inform all GPUs in the system that
-	 * VGA arb has occured and to try and disable resources
+	 * VGA arb has occurred and to try and disable resources
 	 * if they can */
 	if (!vga_arbiter_used) {
 		vga_arbiter_used = true;
@@ -598,7 +598,7 @@ static inline void vga_update_device_decodes(struct vga_device *vgadev,
 	pr_debug("vgaarb: decoding count now is: %d\n", vga_decode_count);
 }
 
-void __vga_set_legacy_decoding(struct pci_dev *pdev, unsigned int decodes, bool userspace)
+static void __vga_set_legacy_decoding(struct pci_dev *pdev, unsigned int decodes, bool userspace)
 {
 	struct vga_device *vgadev;
 	unsigned long flags;
@@ -636,7 +636,7 @@ int vga_client_register(struct pci_dev *pdev, void *cookie,
 			void (*irq_set_state)(void *cookie, bool state),
 			unsigned int (*set_vga_decode)(void *cookie, bool decode))
 {
-	int ret = -1;
+	int ret = -ENODEV;
 	struct vga_device *vgadev;
 	unsigned long flags;
 
@@ -774,7 +774,7 @@ static ssize_t vga_arb_read(struct file *file, char __user * buf,
 	 */
 	spin_lock_irqsave(&vga_lock, flags);
 
-	/* If we are targetting the default, use it */
+	/* If we are targeting the default, use it */
 	pdev = priv->target;
 	if (pdev == NULL || pdev == PCI_INVALID_CARD) {
 		spin_unlock_irqrestore(&vga_lock, flags);
@@ -1211,6 +1211,7 @@ static const struct file_operations vga_arb_device_fops = {
 	.poll = vga_arb_fpoll,
 	.open = vga_arb_open,
 	.release = vga_arb_release,
+	.llseek = noop_llseek,
 };
 
 static struct miscdevice vga_arb_device = {

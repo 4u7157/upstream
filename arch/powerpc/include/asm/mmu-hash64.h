@@ -27,7 +27,7 @@
 #define STE_VSID_SHIFT	12
 
 /* Location of cpu0's segment table */
-#define STAB0_PAGE	0x6
+#define STAB0_PAGE	0x8
 #define STAB0_OFFSET	(STAB0_PAGE << 12)
 #define STAB0_PHYS_ADDR	(STAB0_OFFSET + PHYSICAL_START)
 
@@ -433,7 +433,7 @@ typedef struct {
  * with.  However gcc is not clever enough to compute the
  * modulus (2^n-1) without a second multiply.
  */
-#define vsid_scrample(protovsid, size) \
+#define vsid_scramble(protovsid, size) \
 	((((protovsid) * VSID_MULTIPLIER_##size) % VSID_MODULUS_##size))
 
 #else /* 1 */

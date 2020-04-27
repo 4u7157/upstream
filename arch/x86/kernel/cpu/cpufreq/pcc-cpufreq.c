@@ -39,7 +39,7 @@
 
 #include <acpi/processor.h>
 
-#define PCC_VERSION 	"1.00.00"
+#define PCC_VERSION	"1.10.00"
 #define POLL_LOOPS 	300
 
 #define CMD_COMPLETE 	0x1
@@ -102,7 +102,7 @@ static struct acpi_generic_address doorbell;
 static u64 doorbell_preserve;
 static u64 doorbell_write;
 
-static u8 OSC_UUID[16] = {0x63, 0x9B, 0x2C, 0x9F, 0x70, 0x91, 0x49, 0x1f,
+static u8 OSC_UUID[16] = {0x9F, 0x2C, 0x9B, 0x63, 0x91, 0x70, 0x1f, 0x49,
 			  0xBB, 0x4F, 0xA5, 0x98, 0x2F, 0xA1, 0xB5, 0x46};
 
 struct pcc_cpu {
@@ -110,7 +110,7 @@ struct pcc_cpu {
 	u32 output_offset;
 };
 
-static struct pcc_cpu *pcc_cpu_info;
+static struct pcc_cpu __percpu *pcc_cpu_info;
 
 static int pcc_cpufreq_verify(struct cpufreq_policy *policy)
 {
@@ -195,7 +195,7 @@ static unsigned int pcc_get_freq(unsigned int cpu)
 cmd_incomplete:
 	iowrite16(0, &pcch_hdr->status);
 	spin_unlock(&pcc_lock);
-	return -EINVAL;
+	return 0;
 }
 
 static int pcc_cpufreq_target(struct cpufreq_policy *policy,
@@ -315,8 +315,6 @@ static int __init pcc_cpufreq_do_osc(acpi_handle *handle)
 
 	input.count = 4;
 	input.pointer = in_params;
-	input.count = 4;
-	input.pointer = in_params;
 	in_params[0].type               = ACPI_TYPE_BUFFER;
 	in_params[0].buffer.length      = 16;
 	in_params[0].buffer.pointer     = OSC_UUID;
@@ -368,16 +366,22 @@ static int __init pcc_cpufreq_do_osc(acpi_handle *handle)
 		return -ENODEV;
 
 	out_obj = output.pointer;
-	if (out_obj->type != ACPI_TYPE_BUFFER)
-		return -ENODEV;
+	if (out_obj->type != ACPI_TYPE_BUFFER) {
+		ret = -ENODEV;
+		goto out_free;
+	}
 
 	errors = *((u32 *)out_obj->buffer.pointer) & ~(1 << 0);
-	if (errors)
-		return -ENODEV;
+	if (errors) {
+		ret = -ENODEV;
+		goto out_free;
+	}
 
 	supported = *((u32 *)(out_obj->buffer.pointer + 4));
-	if (!(supported & 0x1))
-		return -ENODEV;
+	if (!(supported & 0x1)) {
+		ret = -ENODEV;
+		goto out_free;
+	}
 
 out_free:
 	kfree(output.pointer);

@@ -58,6 +58,7 @@
 
 MODULE_LICENSE("GPL");
 MODULE_VERSION(SMSC_DRV_VERSION);
+MODULE_ALIAS("platform:smsc911x");
 
 #if USE_DEBUG > 0
 static int debug = 16;
@@ -790,8 +791,8 @@ static int smsc911x_mii_probe(struct net_device *dev)
 		return -ENODEV;
 	}
 
-	SMSC_TRACE(PROBE, "PHY %d: addr %d, phy_id 0x%08X",
-			phy_addr, phydev->addr, phydev->phy_id);
+	SMSC_TRACE(PROBE, "PHY: addr %d, phy_id 0x%08X",
+			phydev->addr, phydev->phy_id);
 
 	ret = phy_connect_direct(dev, phydev,
 			&smsc911x_phy_adjust_link, 0,
@@ -1048,7 +1049,7 @@ static int smsc911x_poll(struct napi_struct *napi, int budget)
 		smsc911x_rx_readfifo(pdata, (unsigned int *)skb->head,
 				     pktwords);
 		skb->protocol = eth_type_trans(skb, dev);
-		skb->ip_summed = CHECKSUM_NONE;
+		skb_checksum_none_assert(skb);
 		netif_receive_skb(skb);
 
 		/* Update counters */
@@ -1176,6 +1177,11 @@ static int smsc911x_open(struct net_device *dev)
 
 	smsc911x_reg_write(pdata, HW_CFG, 0x00050000);
 	smsc911x_reg_write(pdata, AFC_CFG, 0x006E3740);
+
+	/* Increase the legal frame size of VLAN tagged frames to 1522 bytes */
+	spin_lock_irq(&pdata->mac_lock);
+	smsc911x_mac_write(pdata, VLAN1, ETH_P_8021Q);
+	spin_unlock_irq(&pdata->mac_lock);
 
 	/* Make sure EEPROM has finished loading before setting GPIO_CFG */
 	timeout = 50;
@@ -1550,7 +1556,7 @@ static int smsc911x_do_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 	if (!netif_running(dev) || !pdata->phy_dev)
 		return -EINVAL;
 
-	return phy_mii_ioctl(pdata->phy_dev, if_mii(ifr), cmd);
+	return phy_mii_ioctl(pdata->phy_dev, ifr, cmd);
 }
 
 static int
@@ -1663,7 +1669,7 @@ static int smsc911x_eeprom_send_cmd(struct smsc911x_data *pdata, u32 op)
 	}
 
 	if (e2cmd & E2P_CMD_EPC_TIMEOUT_) {
-		SMSC_TRACE(DRV, "Error occured during eeprom operation");
+		SMSC_TRACE(DRV, "Error occurred during eeprom operation");
 		return -EINVAL;
 	}
 
@@ -1812,6 +1818,7 @@ static int __devinit smsc911x_init(struct net_device *dev)
 	SMSC_TRACE(PROBE, "PHY will be autodetected.");
 
 	spin_lock_init(&pdata->dev_lock);
+	spin_lock_init(&pdata->mac_lock);
 
 	if (pdata->ioaddr == 0) {
 		SMSC_WARNING(PROBE, "pdata->ioaddr: 0x00000000");
@@ -1889,8 +1896,11 @@ static int __devinit smsc911x_init(struct net_device *dev)
 	/* workaround for platforms without an eeprom, where the mac address
 	 * is stored elsewhere and set by the bootloader.  This saves the
 	 * mac address before resetting the device */
-	if (pdata->config.flags & SMSC911X_SAVE_MAC_ADDRESS)
+	if (pdata->config.flags & SMSC911X_SAVE_MAC_ADDRESS) {
+		spin_lock_irq(&pdata->mac_lock);
 		smsc911x_read_mac_address(dev);
+		spin_unlock_irq(&pdata->mac_lock);
+	}
 
 	/* Reset the LAN911x */
 	if (smsc911x_soft_reset(pdata))
@@ -2053,8 +2063,6 @@ static int __devinit smsc911x_drv_probe(struct platform_device *pdev)
 		SMSC_TRACE(PROBE, "Network interface: \"%s\"", dev->name);
 	}
 
-	spin_lock_init(&pdata->mac_lock);
-
 	retval = smsc911x_mii_init(pdev, dev);
 	if (retval) {
 		SMSC_WARNING(PROBE,
@@ -2074,7 +2082,7 @@ static int __devinit smsc911x_drv_probe(struct platform_device *pdev)
 	} else {
 		/* Try reading mac address from device. if EEPROM is present
 		 * it will already have been set */
-		smsc911x_read_mac_address(dev);
+		smsc_get_mac(dev);
 
 		if (is_valid_ether_addr(dev->dev_addr)) {
 			/* eeprom values are valid  so use them */
@@ -2175,6 +2183,7 @@ static struct platform_driver smsc911x_driver = {
 /* Entry point for loading the module */
 static int __init smsc911x_init_module(void)
 {
+	SMSC_INITIALIZE();
 	return platform_driver_register(&smsc911x_driver);
 }
 

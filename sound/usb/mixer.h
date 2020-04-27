@@ -3,7 +3,6 @@
 
 struct usb_mixer_interface {
 	struct snd_usb_audio *chip;
-	unsigned int ctrlif;
 	struct list_head list;
 	unsigned int ignore_ctl_error;
 	struct urb *urb;
@@ -53,5 +52,7 @@ void snd_usb_mixer_notify_id(struct usb_mixer_interface *mixer, int unitid);
 
 int snd_usb_mixer_set_ctl_value(struct usb_mixer_elem_info *cval,
 				int request, int validx, int value_set);
+void snd_usb_mixer_inactivate(struct usb_mixer_interface *mixer);
+int snd_usb_mixer_activate(struct usb_mixer_interface *mixer);
 
 #endif /* __USBMIXER_H */
